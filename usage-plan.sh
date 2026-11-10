@@ -245,6 +245,8 @@ def parse_claude(text, now):
 
 def render(now, entries):
     lines = [f"-   오늘 `{format_korean_date(now)}`"]
+    # 초기화 시각이 여러 개면 가장 먼 시각을 기준으로 내림차순 정렬한다.
+    entries = sorted(entries, key=lambda entry: max(entry[3]), reverse=True)
     for name, numbers, reset_text, moments in entries:
         lines.append("")
         lines.append(
