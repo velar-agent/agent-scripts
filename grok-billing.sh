@@ -242,6 +242,15 @@ def main():
     used = config.get("creditUsagePercent")
     if used is None and len(products) == 1 and isinstance(products[0], dict):
         used = products[0].get("usagePercent")
+    # 사용률이 0이면 creditUsagePercent와 productUsage가 응답에서 빠진다.
+    # 기간이 있으면 0%이다. 상품이 둘 이상이면 어느 값인지 알 수 없어 실패한다.
+    has_period = bool(period.get("end") or config.get("billingPeriodEnd"))
+    if (
+        used is None
+        and has_period
+        and (not products or (len(products) == 1 and isinstance(products[0], dict)))
+    ):
+        used = 0
     if used is None:
         raise RuntimeError("No usage limits were returned for the current Grok account.")
     reset_at = period.get("end") or config.get("billingPeriodEnd")

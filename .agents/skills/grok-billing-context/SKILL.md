@@ -5,7 +5,7 @@ description: agent-scripts의 Grok 청구 사용량 스크립트(grok-billing.sh
 
 # Grok 청구 사용량 조회 맥락
 
-확인일: 2026-11-09. 이 프로젝트 작업에서 확인한 대화 맥락과 외부 전제 19개를 기록합니다. 티어 표시 표와 요약 한 줄의 구현은 `grok-billing.sh`에 있으므로 여기 다시 적지 않습니다.
+확인일: 2026-11-10. 이 프로젝트 작업에서 확인한 대화 맥락과 외부 전제 33개를 기록합니다. 티어 표시 표와 요약 한 줄의 구현은 `grok-billing.sh`에 있으므로 여기 다시 적지 않습니다.
 
 1. **처음 요청:** 사용자는 경로와 출력 형식을 정하지 않고 grok-usage 스크립트만 요청했다. 같은 저장소의 `claude-usage.sh`, `codex-account-rateLimits-read.py`에 맞춰 셸 스크립트, 기본 JSON, `--summary`, `--timeout` 기본 20초, 영문 CLI, 한국어 주석으로 시작했다.
 
@@ -45,4 +45,32 @@ description: agent-scripts의 Grok 청구 사용량 스크립트(grok-billing.sh
 
 19. **python3:** 옆 스크립트와 의존성을 맞추려고 python3를 골랐다. jq로 이 응답을 처리하는지는 시험하지 않았다.
 
-코드와 주석에서 바로 알 수 있어 기록하지 않은 사실 6개: 호출 주소·Bearer·auth.json의 `key`·`GROK_HOME`·`GROK_CLI_CHAT_PROXY_BASE_URL`, 토큰 미갱신과 401일 때 `grok login` 안내, 요약 한 줄의 토큰 배치·기간 라벨·티어 표·퍼센트 끝 0 제거·현지 `Month D, HH:MM`, 요약에서만 사용자 정보를 조회하고 JSON 출력은 청구 본문만 찍는 것, 사용률이 없을 때 상품이 하나면 `usagePercent`를 쓰는 것, `--timeout` 기본 20초와 curl 28 처리.
+20. **2026-11-10 실응답에 사용률 필드가 없었다:** `/billing?format=credits` 본문에 `creditUsagePercent`와 `productUsage`가 없었다.
+
+21. **그날의 기간:** `currentPeriod.type`은 `USAGE_PERIOD_TYPE_WEEKLY`이고, 시작은 `2026-11-10T06:42:43.684529+00:00`, 끝은 `2026-11-17T06:42:43.684529+00:00`이었다.
+
+22. **0인 금액 필드는 남아 있었다:** 같은 본문의 `onDemandCap.val`, `onDemandUsed.val`, `prepaidBalance.val`은 0이었다.
+
+23. **같은 본문의 다른 필드:** `isUnifiedBillingUser`는 true이고, `topUpMethod`는 `TOP_UP_METHOD_SAVED_PAYMENT_METHOD`였다. `billingPeriodStart`와 `billingPeriodEnd`는 기간 시작·끝과 같았다.
+
+24. **그 본문에 `monthlyLimit`은 없었다.**
+
+25. **로그 건수:** `billing: fetched credits config` 150건 중 `creditUsagePercent`가 없는 사건이 27건, 있는 사건이 123건이었다.
+
+26. **로그 config 키 차이:** 없는 사건의 config 키는 `billingPeriodEnd`, `billingPeriodStart`, `currentPeriod`, `historyLen`, `isUnifiedBillingUser`, `onDemandCap`, `onDemandUsed`, `prepaidBalance`이고, 있는 사건은 여기에 `creditUsagePercent`가 더해진다.
+
+27. **기간별 누락 건수:** 기간 시작 `2026-10-27T06:42:43.684529+00:00`이 8건, `2026-11-03T06:42:43.684529+00:00`이 10건, `2026-11-10T06:42:43.684529+00:00`이 9건이다.
+
+28. **2026-10-27 기간의 다음 사용률:** 마지막 누락은 `2026-10-27T12:36:40.311Z`이고, 다음 값은 `2026-10-27T12:37:49.660Z`의 `1.0`이다.
+
+29. **2026-11-03 기간의 다음 사용률:** 마지막 누락은 `2026-11-09T04:42:15.238Z`이고, 다음 값은 `2026-11-09T04:43:32.175Z`의 `1.0`이다.
+
+30. **2026-11-10 기간의 사용률 로그:** 마지막 누락은 `2026-11-10T07:59:22.246Z`이고, 그 시각까지 이 기간의 `creditUsagePercent` 로그는 없었다.
+
+31. **바이너리 BillingConfig:** grok 1.0.77 바이너리의 BillingConfig 필드 이름에 `monthlyLimit`이 `creditUsagePercent`, `currentPeriod`, `onDemandCap`, `onDemandUsed`, `prepaidBalance`, `isUnifiedBillingUser`, `billingPeriodStart`, `history`와 함께 있다.
+
+32. **바이너리 BillingPeriodUsage:** 같은 바이너리에 `billingCycle`, `includedUsed`, `totalUsed`가 있다.
+
+33. **수정 후 실계정 요약:** `Weekly limit (X Premium+), 0%, Resets: November 17, 15:42`였다.
+
+코드와 주석에서 바로 알 수 있어 기록하지 않은 사실 7개: 호출 주소·Bearer·auth.json의 `key`·`GROK_HOME`·`GROK_CLI_CHAT_PROXY_BASE_URL`, 토큰 미갱신과 401일 때 `grok login` 안내, 요약 한 줄의 토큰 배치·기간 라벨·티어 표·퍼센트 끝 0 제거·현지 `Month D, HH:MM`, 요약에서만 사용자 정보를 조회하고 JSON 출력은 청구 본문만 찍는 것, 사용률이 없을 때 상품이 하나면 `usagePercent`를 쓰는 것, 사용률 필드가 없고 기간이 있으며 상품이 없거나 하나면 0%로 두고 상품이 둘 이상이면 실패하는 것, `--timeout` 기본 20초와 curl 28 처리.
