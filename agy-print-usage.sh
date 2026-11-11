@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# agy -p "/usage" 명령으로 Antigravity 계정 사용량(세션·주간 한도)을 조회하고
-# 선택적으로 세션 한도와 주간 한도를 각각 한 블록으로 묶은 요약을 출력한다.
+# agy -p "/usage" 명령으로 Antigravity 계정 사용량(세션·주간 한도)을 조회한다.
+# 기본 출력은 원본 텍스트 표이며, 옵션에 따라 JSON 형식 또는 요약 블록을 출력한다.
 
 set -euo pipefail
 
 print_help() {
   cat <<EOF
-usage: $(basename "$0") [-h] [--summary] [--raw] [--timeout SECONDS]
+usage: $(basename "$0") [-h] [--output-format-json] [--summary] [--timeout SECONDS]
 
-Print the complete Antigravity usage result as JSON.
+Print Antigravity usage limits using 'agy -p "/usage"'.
 
 options:
-  -h, --help         show this help message and exit
-  --summary          Print a short summary of the session and weekly limits.
-  --raw              Print the raw table output from 'agy -p "/usage"'.
-  --timeout SECONDS  Maximum time to wait for a response (default: 20).
+  -h, --help              show this help message and exit
+  --output-format-json    Print the usage result as JSON.
+  --summary               Print a short summary of the session and weekly limits.
+  --timeout SECONDS       Maximum time to wait for a response (default: 20).
 EOF
 }
 
@@ -23,8 +23,8 @@ fail() {
   exit 1
 }
 
+output_format_json=false
 summary=false
-raw=false
 timeout=20
 
 while [[ $# -gt 0 ]]; do
@@ -33,12 +33,12 @@ while [[ $# -gt 0 ]]; do
       print_help
       exit 0
       ;;
-    --summary)
-      summary=true
+    --output-format-json|--json)
+      output_format_json=true
       shift
       ;;
-    --raw)
-      raw=true
+    --summary)
+      summary=true
       shift
       ;;
     --timeout)
@@ -57,8 +57,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$summary" == true && "$raw" == true ]]; then
-  fail "--summary and --raw cannot be used together"
+if [[ "$output_format_json" == true && "$summary" == true ]]; then
+  fail "--output-format-json and --summary cannot be used together"
 fi
 
 # agy --print-timeout 형식에 맞는 양의 유한한 수만 허용한다.
@@ -70,9 +70,9 @@ for cmd in agy python3; do
   command -v "$cmd" >/dev/null 2>&1 || fail "$cmd was not found in PATH."
 done
 
-if [[ "$raw" == true ]]; then
-  agy --print-timeout "${timeout}s" -p "/usage"
-  exit $?
+# 기본 출력: 원본 agy -p "/usage" 텍스트 표 출력
+if [[ "$output_format_json" == false && "$summary" == false ]]; then
+  exec agy --print-timeout "${timeout}s" -p "/usage"
 fi
 
 response_file=$(mktemp)
@@ -213,7 +213,7 @@ except (OSError, RuntimeError, ValueError) as error:
     print(f"Error: {error}", file=sys.stderr)
     sys.exit(1)
 PY
-else
+elif [[ "$output_format_json" == true ]]; then
   python3 - "$response_file" <<'PY'
 import json
 import sys
@@ -221,7 +221,6 @@ import sys
 with open(sys.argv[1]) as f:
     data = json.load(f)
 
-target = data.get("command", {}).get("data") if isinstance(data, dict) and "command" in data else data
-print(json.dumps(target, ensure_ascii=False, indent=2))
+print(json.dumps(data, ensure_ascii=False, indent=2))
 PY
 fi
