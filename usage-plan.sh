@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 코덱스, 그로크, 클로드의 주간 한도를 소진계획 한 목록으로 출력한다.
+# 코덱스, 그로크, 클로드, 제미나의 주간 한도를 소진계획 한 목록으로 출력한다.
 # 사용률 칸은 12칸이다. 부족한 왼쪽은 밑줄로 채우고, 본문 앞에는 공백을 둔다.
 # 예: `_______ 50%u`, `_ 36%u, 59%u`
 # 초기화 시각은 분이 1분 이상이면 다음 정시로 올리고, 0–11시는 오전, 12–18시는 오후, 19–23시는 저녁이다.
@@ -11,7 +11,7 @@ print_help() {
   cat <<EOF
 usage: $(basename "$0") [-h] [--timeout SECONDS]
 
-Print today's date and the weekly burn plan for Codex, Grok, and Claude.
+Print today's date and the weekly burn plan for Codex, Grok, Claude, and Gemini.
 
 options:
   -h, --help         show this help message and exit
@@ -59,7 +59,7 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# 세 조회는 서로 기다리지 않는다. 실패하면 쪽의 오류를 그대로 보여 주고 끝낸다.
+# 네 조회는 서로 기다리지 않는다. 실패하면 쪽의 오류를 그대로 보여 주고 끝낸다.
 "$script_dir/codex-account-rateLimits-read.py" --weekly-limit --timeout "$timeout" \
   >"$work/codex" 2>"$work/codex.err" &
 codex_pid=$!
@@ -69,20 +69,25 @@ grok_pid=$!
 "$script_dir/claude-usage.sh" --summary --timeout "$timeout" \
   >"$work/claude" 2>"$work/claude.err" &
 claude_pid=$!
+"$script_dir/agy-print-usage.sh" \
+  >"$work/gemini" 2>"$work/gemini.err" &
+gemini_pid=$!
 
 codex_ec=0
 grok_ec=0
 claude_ec=0
+gemini_ec=0
 wait "$codex_pid" || codex_ec=$?
 wait "$grok_pid" || grok_ec=$?
 wait "$claude_pid" || claude_ec=$?
+wait "$gemini_pid" || gemini_ec=$?
 
-if [[ "$codex_ec" -ne 0 || "$grok_ec" -ne 0 || "$claude_ec" -ne 0 ]]; then
-  cat "$work/codex.err" "$work/grok.err" "$work/claude.err" >&2
+if [[ "$codex_ec" -ne 0 || "$grok_ec" -ne 0 || "$claude_ec" -ne 0 || "$gemini_ec" -ne 0 ]]; then
+  cat "$work/codex.err" "$work/grok.err" "$work/claude.err" "$work/gemini.err" >&2
   exit 1
 fi
 
-python3 - "$work/codex" "$work/grok" "$work/claude" <<'PY'
+python3 - "$work/codex" "$work/grok" "$work/claude" "$work/gemini" <<'PY'
 import re
 import sys
 from datetime import datetime, timedelta
@@ -109,6 +114,13 @@ GROK_RE = re.compile(
 CLAUDE_RESET_RE = re.compile(
     r"Resets (?P<month>[A-Z][a-z]{2}) (?P<day>\d{1,2})(?:, (?P<year>\d{4}))? at "
     r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?(?P<ampm>am|pm) \([^)]*\)"
+)
+GEMINI_ARGON_RE = re.compile(
+    r"^Gemini 4 Argon\s+Gemini 4 Argon Weekly Limit\s+(?P<left>\d+)%\s+"
+    r"(?:(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)|"
+    r"(?P<reset>(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2}) "
+    r"(?P<hour>\d{2}):(?P<minute>\d{2}) \S+))$",
+    re.MULTILINE,
 )
 
 
@@ -243,6 +255,29 @@ def parse_claude(text, now):
     return numbers, reset_text, moments
 
 
+def parse_gemini(text, now):
+    match = GEMINI_ARGON_RE.search(text)
+    if match is None:
+        raise RuntimeError(f"Could not parse the Gemini 4 Argon summary: {text!r}")
+    if match.group("iso") is not None:
+        local_dt = datetime.fromisoformat(match.group("iso").replace("Z", "+00:00")).astimezone()
+        reset_text = f"resets {local_dt.strftime('%Y-%m-%d %H:%M %Z')}"
+        moment = local_dt.replace(tzinfo=None, second=0, microsecond=0)
+    else:
+        reset_text = f"resets {match.group('reset')}"
+        moment = wall_clock(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+            int(match.group("hour")),
+            int(match.group("minute")),
+            now,
+        )
+    # Gemini 4 Argon 요약은 남은 비율이다. 그로크·클로드와 같이 사용한 비율로 적는다.
+    used = 100 - int(match.group("left"))
+    return [str(used)], reset_text, [moment]
+
+
 def render(now, entries):
     lines = [f"-   오늘 `{format_korean_date(now)}`"]
     # 초기화 시각이 여러 개면 가장 먼 시각을 기준으로 내림차순 정렬한다.
@@ -258,11 +293,12 @@ def render(now, entries):
 
 def main():
     now = local_now()
-    codex, grok, claude = (read_text(path) for path in sys.argv[1:])
+    codex, grok, claude, gemini = (read_text(path) for path in sys.argv[1:])
     entries = [
         ("코덱스",) + parse_codex(codex, now),
         ("그로크",) + parse_grok(grok, now),
         ("클로드",) + parse_claude(claude, now),
+        ("제미나",) + parse_gemini(gemini, now),
     ]
     print(render(now, entries))
 
