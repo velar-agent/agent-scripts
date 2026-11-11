@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 코덱스, 그로크, 클로드, 제미나의 주간 한도를 소진계획 한 목록으로 출력한다.
+# Print the weekly limits of Codex, Grok, Claude, Gemini, and Muse as a burn-plan list.
+# 코덱스, 그로크, 클로드, 제미나, 뮤으즈의 주간 한도를 소진계획 한 목록으로 출력한다.
 # 사용률 칸은 12칸이다. 부족한 왼쪽은 밑줄로 채우고, 본문 앞에는 공백을 둔다.
 # 예: `_______ 50%u`, `_ 36%u, 59%u`
 # 초기화 시각은 분이 1분 이상이면 다음 정시로 올리고, 0–11시는 오전, 12–18시는 오후, 19–23시는 저녁이다.
@@ -11,7 +12,7 @@ print_help() {
   cat <<EOF
 usage: $(basename "$0") [-h] [--timeout SECONDS]
 
-Print today's date and the weekly burn plan for Codex, Grok, Claude, and Gemini.
+Print today's date and the weekly burn plan for Codex, Grok, Claude, Gemini, and Muse.
 
 options:
   -h, --help         show this help message and exit
@@ -59,7 +60,8 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# 네 조회는 서로 기다리지 않는다. 실패하면 쪽의 오류를 그대로 보여 주고 끝낸다.
+# Run the five queries concurrently. On failure, print that query's error as is and exit.
+# 다섯 조회는 서로 기다리지 않는다. 실패하면 쪽의 오류를 그대로 보여 주고 끝낸다.
 "$script_dir/codex-account-rateLimits-read.py" --weekly-limit --timeout "$timeout" \
   >"$work/codex" 2>"$work/codex.err" &
 codex_pid=$!
@@ -72,22 +74,27 @@ claude_pid=$!
 "$script_dir/agy-print-usage.sh" \
   >"$work/gemini" 2>"$work/gemini.err" &
 gemini_pid=$!
+"$script_dir/muse-usage.sh" \
+  >"$work/muse" 2>"$work/muse.err" &
+muse_pid=$!
 
 codex_ec=0
 grok_ec=0
 claude_ec=0
 gemini_ec=0
+muse_ec=0
 wait "$codex_pid" || codex_ec=$?
 wait "$grok_pid" || grok_ec=$?
 wait "$claude_pid" || claude_ec=$?
 wait "$gemini_pid" || gemini_ec=$?
+wait "$muse_pid" || muse_ec=$?
 
-if [[ "$codex_ec" -ne 0 || "$grok_ec" -ne 0 || "$claude_ec" -ne 0 || "$gemini_ec" -ne 0 ]]; then
-  cat "$work/codex.err" "$work/grok.err" "$work/claude.err" "$work/gemini.err" >&2
+if [[ "$codex_ec" -ne 0 || "$grok_ec" -ne 0 || "$claude_ec" -ne 0 || "$gemini_ec" -ne 0 || "$muse_ec" -ne 0 ]]; then
+  cat "$work/codex.err" "$work/grok.err" "$work/claude.err" "$work/gemini.err" "$work/muse.err" >&2
   exit 1
 fi
 
-python3 - "$work/codex" "$work/grok" "$work/claude" "$work/gemini" <<'PY'
+python3 - "$work/codex" "$work/grok" "$work/claude" "$work/gemini" "$work/muse" <<'PY'
 import re
 import sys
 from datetime import datetime, timedelta
@@ -121,6 +128,10 @@ GEMINI_ARGON_RE = re.compile(
     r"(?P<reset>(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2}) "
     r"(?P<hour>\d{2}):(?P<minute>\d{2}) \S+))$",
     re.MULTILINE,
+)
+MUSE_RESET_RE = re.compile(
+    r"Resets (?P<month>[A-Z][a-z]{2}) (?P<day>\d{1,2}) at "
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2}) (?P<ampm>AM|PM)"
 )
 
 
@@ -278,6 +289,31 @@ def parse_gemini(text, now):
     return [str(used)], reset_text, [moment]
 
 
+def parse_muse(text, now):
+    # Skip the 5-hour window. The listed time is the weekly reset, and the usage is that row's value.
+    # 5시간 창은 빠진다. 목록의 시각은 주간 초기화이고, 사용률도 그 행의 값이다.
+    body = None
+    for line in text.splitlines():
+        if line.strip().startswith("Weekly"):
+            body = line.strip()
+            break
+    if not body:
+        raise RuntimeError("No weekly limit was returned for the current Muse account.")
+    numbers = re.findall(r"(\d+)% used", body.split("Resets ", 1)[0])
+    resets = list(MUSE_RESET_RE.finditer(body))
+    if not numbers or not resets:
+        raise RuntimeError(f"Could not parse the Muse summary: {body!r}")
+    moments = []
+    for reset in resets:
+        month = SHORT_MONTHS.get(reset.group("month"))
+        if month is None:
+            raise RuntimeError(f"Could not parse the Muse summary: {body!r}")
+        hour, minute = clock_24(reset.group("hour"), reset.group("minute"), reset.group("ampm"))
+        moments.append(wall_clock(None, month, int(reset.group("day")), hour, minute, now))
+    reset_text = body[body.find("Resets "):]
+    return numbers, reset_text, moments
+
+
 def render(now, entries):
     lines = [f"-   오늘 `{format_korean_date(now)}`"]
     # 초기화 시각이 여러 개면 가장 먼 시각을 기준으로 내림차순 정렬한다.
@@ -293,12 +329,13 @@ def render(now, entries):
 
 def main():
     now = local_now()
-    codex, grok, claude, gemini = (read_text(path) for path in sys.argv[1:])
+    codex, grok, claude, gemini, muse = (read_text(path) for path in sys.argv[1:])
     entries = [
         ("코덱스",) + parse_codex(codex, now),
         ("그로크",) + parse_grok(grok, now),
         ("클로드",) + parse_claude(claude, now),
         ("제미나",) + parse_gemini(gemini, now),
+        ("뮤으즈",) + parse_muse(muse, now),
     ]
     print(render(now, entries))
 
