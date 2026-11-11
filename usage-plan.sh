@@ -3,8 +3,10 @@
 # 코덱스, 그로크, 클로드, 제미나, 뮤으즈의 주간 한도를 소진계획 한 목록으로 출력한다.
 # 사용률 칸은 12칸이다. 부족한 왼쪽은 밑줄로 채우고, 본문 앞에는 공백을 둔다.
 # 예: `_______ 50%u`, `_ 36%u, 59%u`
-# 초기화 시각은 분이 1분 이상이면 다음 정시로 올리고, 0–11시는 오전, 12–18시는 오후, 19–23시는 저녁이다.
-# 예: 2:02 AM → 오전3시, 15:42 → 오후4시, 8:00 PM → 저녁8시
+# Floor reset times to the hour; use 오전 for 0–11, 오후 for 12–18, and 저녁 for 19–23.
+# 초기화 시각은 분·초를 버려 해당 정각으로 내리고, 0–11시는 오전, 12–18시는 오후, 19–23시는 저녁이다.
+# Examples: 2:02 AM → 오전2시, 15:42 → 오후3시, 8:00 PM → 저녁8시.
+# 예: 2:02 AM → 오전2시, 15:42 → 오후3시, 8:00 PM → 저녁8시
 
 set -euo pipefail
 
@@ -173,10 +175,9 @@ def format_korean_date(moment):
 
 
 def format_korean_reset(moment):
-    # 정시가 아니면 다음 정시로 올린다. 2:02는 오전3시, 15:42는 오후4시다.
-    rounded = moment.replace(second=0, microsecond=0)
-    if rounded.minute:
-        rounded = rounded.replace(minute=0) + timedelta(hours=1)
+    # Floor to the hour so the displayed time never exceeds the reset time.
+    # 표시 시각이 초기화 시각보다 늦지 않도록 정각으로 내린다.
+    rounded = moment.replace(minute=0, second=0, microsecond=0)
     hour = rounded.hour
     if hour < 12:
         period = "오전"
