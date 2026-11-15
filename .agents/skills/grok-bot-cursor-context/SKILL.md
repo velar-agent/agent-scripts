@@ -1,11 +1,11 @@
 ---
 name: grok-bot-cursor-context
-description: agent-scripts의 grok-bot-cursor-usage.sh 또는 grok-bot-cursor-token-from-macos-keychain.sh를 수정하거나 Grok Bot 한도 해석·인증·Windows 이식을 다룰 때, 사용자 선택의 배경과 실검증 범위를 적용합니다.
+description: agent-scripts의 grok-bot-cursor-usage.sh와 macOS/Linux 토큰 추출기를 수정하거나 Grok Bot 한도 해석·인증·Windows 이식을 다룰 때, 사용자 선택의 배경과 실검증 범위를 적용합니다.
 ---
 
 # Grok Bot 사용량과 토큰 추출 맥락
 
-확인일: 2026-11-15. 코드와 주석만으로 알 수 없는 사용자 요청 배경, 관측 결과, 검증 한계 14개를 기록합니다. 구현 상세는 [사용량 스크립트](../../../grok-bot-cursor-usage.sh)와 [macOS 추출기](../../../grok-bot-cursor-token-from-macos-keychain.sh)를 확인해 주세요. 당시의 계정·버전·수치를 현재 상태로 간주하지 않습니다.
+확인일: 2026-11-15. 코드와 주석만으로 알 수 없는 사용자 요청 배경, 관측 결과, 검증 한계 18개를 기록합니다. 구현 상세는 [사용량 스크립트](../../../grok-bot-cursor-usage.sh), [macOS 추출기](../../../grok-bot-cursor-token-from-macos-keychain.sh), [Linux 추출기](../../../grok-bot-cursor-token-from-linux.sh)를 확인해 주세요. 당시의 계정·버전·수치를 현재 상태로 간주하지 않습니다.
 
 1. **조회 대상과 인증의 검증 범위:** 사용자가 요청한 대상은 데스크톱 Grok Bot의 계정 사용 한도입니다. 기존 `grok-billing.sh`가 다루는 Grok Build와 인증 경로가 다릅니다. 이번에 성공을 확인한 인증은 Grok Bot에 저장된 Cursor 액세스 토큰이며, 일반 xAI API 키나 Grok Build 토큰으로 이를 대체할 수 있는지는 검증하지 않았습니다.
 
@@ -34,3 +34,11 @@ description: agent-scripts의 grok-bot-cursor-usage.sh 또는 grok-bot-cursor-to
 13. **Windows 경로와 동작은 미검증:** Windows 안내의 `%APPDATA%` 아래 파일 위치는 Electron의 경로 규칙과 macOS 앱 이름으로 추정한 후보입니다. 실제 Windows의 인증 파일, 복호화, API 인증은 이번 작업에서 확인하지 않았습니다. Windows 작업을 시작할 때 [구현 안내](../../../docs/grok-bot-cursor-token-windows.md)의 파일 조사와 완료 기준을 읽고 대상 PC에서 확인해 주세요.
 
 14. **Windows 복호화 조사의 근거:** Electron 43.8.9의 동기 `safeStorage` 구현은 Chromium에서 제거된 동기 백엔드를 패치로 복원합니다. Windows 절차의 근거는 해당 태그의 `revert_oscrypt_remove_sync_backend.patch`이며, 이 구현의 `v10`은 macOS의 CBC 방식과 달리 DPAPI로 보호한 키를 사용하는 AES-GCM입니다. 같은 접두사만 보고 macOS 함수를 이식하면 안 됩니다. 출처 링크와 구체적인 절차는 [구현 안내의 Windows 복호화 절](../../../docs/grok-bot-cursor-token-windows.md#windows-복호화-구현의-근거와-절차)에 모아 두었으며, 이는 소스 근거와 Windows 실검증을 구분하기 위한 기록입니다.
+
+15. **Linux 설치본과 실제 저장 표본:** Linux 작업 환경에 설치된 Grok Bot은 1.1.0이었습니다. 실제 인증 파일은 `/home/box/.config/Grok Bot/sand-secrets.json`에 있었고, `version: 1` 형식에 계정 1개가 저장되어 있었습니다. 활성 계정 토큰은 `scoped:v1:`·`plaintext:v1:` 래퍼가 없는 `v10` 암호문이었습니다. 이 경로와 계정 수는 해당 환경의 관측값이며 다른 사용자나 설치본에 고정하지 않습니다.
+
+16. **Linux 검증 환경의 의존성:** 당시 `python3`와 Python `cryptography` 패키지는 설치되어 있었지만 `secret-tool`과 `kwallet-query`는 없었습니다. 이 환경에서 실제 `v10` 토큰 추출에 성공했으므로 해당 성공을 OS 키링 조회 도구가 설치되거나 동작했다는 근거로 해석하지 않습니다.
+
+17. **Linux 실계정 검증:** Linux 추출기로 실제 활성 계정 토큰을 추출하고, 환경변수로 사용량 조회기에 전달해 사용량 API의 HTTP 200과 JSON 응답을 확인했습니다. 실행 전후 인증 파일을 바이트 단위로 비교해 내용이 동일함을 확인했습니다. 토큰 원문과 계정 응답 본문은 작업 로그에 출력하지 않았으며, 이 결과는 당시 계정의 인증 성공을 확인한 것입니다.
+
+18. **Linux 테스트 통과와 검증 한계:** Linux 추출기 자동 테스트 18개가 통과했습니다. 실제 계정에서는 `v10` 추출과 사용량 조회를 검증했고, GNOME Secret Service·KWallet의 `v11` 경로는 가상 암호문과 모의 조회 도구로 검증했습니다. 실제 GNOME/KWallet 세션에서의 잠금 해제, 권한 안내, 저장 키 조회가 성공했다고 확대하지 않습니다.
