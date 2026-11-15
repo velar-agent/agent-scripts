@@ -185,6 +185,7 @@ def main():
             "Example without .env (run from the script directory):\n"
             f'  export {TOKEN_ENV}="$(./grok-bot-cursor-token-from-macos-keychain.sh)"\n'
             "  ./grok-bot-cursor-usage.sh --summary\n\n"
+            "On Linux, use grok-bot-cursor-token-from-linux.sh to extract the token.\n"
             f"Use 'unset {TOKEN_ENV}' to return to env-file authentication.\n"
             "Requires python3 and curl."
         ),
