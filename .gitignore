@@ -1,0 +1,5 @@
+# Keep local credentials out of version control while retaining the example.
+# 예제 파일은 유지하고 로컬 인증 정보는 버전 관리에서 제외한다.
+.env
+.env.*
+!.env.example
