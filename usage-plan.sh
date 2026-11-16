@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Print the weekly limits of Codex, Grok, Claude, Gemini, and Muse as a burn-plan list.
-# 코덱스, 그로크, 클로드, 제미나, 뮤으즈의 주간 한도를 소진계획 한 목록으로 출력한다.
+# Print the weekly limits of Codex, Grok, Claude, Gemini, Muse, and Grok Bot as a burn-plan list.
+# 코덱스, 그로크, 클로드, 제미나, 뮤으즈, 그록봇의 주간 한도를 소진계획 한 목록으로 출력한다.
 # 사용률 칸은 12칸이다. 부족한 왼쪽은 밑줄로 채우고, 본문 앞에는 공백을 둔다.
 # 예: `_______ 50%u`, `_ 36%u, 59%u`
 # Floor reset times to the hour; use 오전 for 0–11, 오후 for 12–18, and 저녁 for 19–23.
@@ -14,7 +14,7 @@ print_help() {
   cat <<EOF
 usage: $(basename "$0") [-h] [--timeout SECONDS]
 
-Print today's date and the weekly burn plan for Codex, Grok, Claude, Gemini, and Muse.
+Print today's date and the weekly burn plan for Codex, Grok, Claude, Gemini, Muse, and Grok Bot.
 
 options:
   -h, --help         show this help message and exit
@@ -62,8 +62,8 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Run the five queries concurrently. On failure, print that query's error as is and exit.
-# 다섯 조회는 서로 기다리지 않는다. 실패하면 쪽의 오류를 그대로 보여 주고 끝낸다.
+# Run the six queries concurrently. On failure, print that query's error as is and exit.
+# 여섯 조회는 서로 기다리지 않는다. 실패하면 쪽의 오류를 그대로 보여 주고 끝낸다.
 "$script_dir/codex-account-rateLimits-read.py" --weekly-limit --timeout "$timeout" \
   >"$work/codex" 2>"$work/codex.err" &
 codex_pid=$!
@@ -79,24 +79,32 @@ gemini_pid=$!
 "$script_dir/muse-usage.sh" \
   >"$work/muse" 2>"$work/muse.err" &
 muse_pid=$!
+# grok-bot-cursor-usage.sh has no --timeout option; it waits up to 20 seconds for its request.
+# grok-bot-cursor-usage.sh에는 --timeout 옵션이 없고, 요청을 20초까지 기다린다.
+"$script_dir/grok-bot-cursor-usage.sh" --summary \
+  >"$work/grokbot" 2>"$work/grokbot.err" &
+grokbot_pid=$!
 
 codex_ec=0
 grok_ec=0
 claude_ec=0
 gemini_ec=0
 muse_ec=0
+grokbot_ec=0
 wait "$codex_pid" || codex_ec=$?
 wait "$grok_pid" || grok_ec=$?
 wait "$claude_pid" || claude_ec=$?
 wait "$gemini_pid" || gemini_ec=$?
 wait "$muse_pid" || muse_ec=$?
+wait "$grokbot_pid" || grokbot_ec=$?
 
-if [[ "$codex_ec" -ne 0 || "$grok_ec" -ne 0 || "$claude_ec" -ne 0 || "$gemini_ec" -ne 0 || "$muse_ec" -ne 0 ]]; then
-  cat "$work/codex.err" "$work/grok.err" "$work/claude.err" "$work/gemini.err" "$work/muse.err" >&2
+if [[ "$codex_ec" -ne 0 || "$grok_ec" -ne 0 || "$claude_ec" -ne 0 || "$gemini_ec" -ne 0 || "$muse_ec" -ne 0 || "$grokbot_ec" -ne 0 ]]; then
+  cat "$work/codex.err" "$work/grok.err" "$work/claude.err" "$work/gemini.err" "$work/muse.err" "$work/grokbot.err" >&2
   exit 1
 fi
 
-python3 - "$work/codex" "$work/grok" "$work/claude" "$work/gemini" "$work/muse" <<'PY'
+python3 - "$work/codex" "$work/grok" "$work/claude" "$work/gemini" "$work/muse" "$work/grokbot" <<'PY'
+import math
 import re
 import sys
 from datetime import datetime, timedelta
@@ -239,6 +247,26 @@ def parse_grok(text, now):
     return [match.group("pct")], match.group("reset"), [moment]
 
 
+def parse_grok_bot(text, now):
+    # Grok Bot prints the same one-line summary as Grok, e.g. "Weekly limit (X Premium+), 74.89%, Resets: November 18, 02:49".
+    # 그록봇 요약은 그로크와 같은 한 줄 형식이다. 예: "Weekly limit (X Premium+), 74.89%, Resets: November 18, 02:49"
+    # A trial expiry ("Expires: ...") or an unknown reset time does not match and fails.
+    # 체험 만료("Expires: ...")나 알 수 없는 초기화 시각은 형식이 맞지 않아 실패한다.
+    match = GROK_RE.search(text)
+    if match is None:
+        raise RuntimeError(f"Could not parse the Grok Bot summary: {text!r}")
+    month = LONG_MONTHS.get(match.group("month"))
+    if month is None:
+        raise RuntimeError(f"Could not parse the Grok Bot summary: {text!r}")
+    moment = wall_clock(
+        None, month, int(match.group("day")), int(match.group("hour")), int(match.group("minute")), now
+    )
+    # Drop the fraction like the Claude and Muse rows: 74.89% → 74.
+    # 클로드·뮤즈 행과 같이 소수점 이하를 버린다: 74.89% → 74
+    used = math.floor(float(match.group("pct")))
+    return [str(used)], match.group("reset"), [moment]
+
+
 def parse_claude(text, now):
     # 세션 한도는 빠진다. 목록의 시각은 주간 초기화이고, 사용률도 그 블록의 순서대로 적는다.
     lines = text.splitlines()
@@ -330,13 +358,14 @@ def render(now, entries):
 
 def main():
     now = local_now()
-    codex, grok, claude, gemini, muse = (read_text(path) for path in sys.argv[1:])
+    codex, grok, claude, gemini, muse, grokbot = (read_text(path) for path in sys.argv[1:])
     entries = [
         ("코덱스",) + parse_codex(codex, now),
         ("그로크",) + parse_grok(grok, now),
         ("클로드",) + parse_claude(claude, now),
         ("제미나",) + parse_gemini(gemini, now),
         ("뮤으즈",) + parse_muse(muse, now),
+        ("그록봇",) + parse_grok_bot(grokbot, now),
     ]
     print(render(now, entries))
 
