@@ -18,7 +18,7 @@ Print today's date and the weekly burn plan for Codex, Grok, Claude, Gemini, Mus
 
 options:
   -h, --help         show this help message and exit
-  --timeout SECONDS  Maximum time to wait for each source (default: 20).
+  --timeout SECONDS  Maximum time to wait for the Codex, Grok, and Claude sources (default: 20).
 EOF
 }
 
@@ -51,7 +51,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# curl --max-time 형식에 맞는 양의 유한한 수만 허용한다. 각 조회에 그대로 넘긴다.
+# Accept only positive, finite numbers in curl --max-time form and pass them to the Codex, Grok, and Claude queries.
+# The Gemini, Muse, and Grok Bot queries take no timeout option.
+# curl --max-time 형식에 맞는 양의 유한한 수만 허용하고, 코덱스·그로크·클로드 조회에 그대로 넘긴다.
+# 제미나·뮤으즈·그록봇 조회에는 시간 제한 옵션이 없다.
 if ! [[ "$timeout" =~ ^[0-9]*\.?[0-9]+$ ]] || ! awk -v t="$timeout" 'BEGIN { exit !(t > 0) }'; then
   fail "--timeout must be a positive, finite number"
 fi
@@ -79,8 +82,8 @@ gemini_pid=$!
 "$script_dir/muse-usage.sh" \
   >"$work/muse" 2>"$work/muse.err" &
 muse_pid=$!
-# grok-bot-cursor-usage.sh has no --timeout option; it waits up to 20 seconds for its request.
-# grok-bot-cursor-usage.sh에는 --timeout 옵션이 없고, 요청을 20초까지 기다린다.
+# grok-bot-cursor-usage.sh has no --timeout option; its curl waits up to 20 seconds and the request process up to 25.
+# grok-bot-cursor-usage.sh에는 --timeout 옵션이 없고, curl은 20초, 요청 프로세스는 25초까지 기다린다.
 "$script_dir/grok-bot-cursor-usage.sh" --summary \
   >"$work/grokbot" 2>"$work/grokbot.err" &
 grokbot_pid=$!
