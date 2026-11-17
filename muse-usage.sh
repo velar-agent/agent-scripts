@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# muse usage 명령으로 Muse 구독 사용량(5시간 창·주간 한도)을 조회한다.
+# Query Muse subscription usage through its CLI, without reading or printing tokens.
+# muse CLI로 구독 사용량(5시간 창·주간 한도)을 조회하며 토큰을 직접 읽거나 출력하지 않는다.
+# Print a short summary by default, or JSON with --json.
 # 기본 출력은 짧은 텍스트 요약이고, --json 옵션 사용 시 JSON 형식으로 출력한다.
-# 인증과 조회는 muse CLI에 맡기고, 토큰을 직접 읽거나 출력하지 않는다.
 
 set -euo pipefail
 
@@ -10,10 +11,15 @@ print_help() {
 usage: $(basename "$0") [-h] [--json]
 
 Print the Muse subscription usage summary as text.
+If the server returns server_sent_no_usage, send one short model request
+with contributor mode off (for this run only), then retry usage once.
 
 options:
   -h, --help         show this help message and exit
   --json             Print the complete usage result as JSON.
+
+environment:
+  MUSE_EXEC_TIMEOUT_SECONDS  Recovery request time limit (default: 60 seconds).
 EOF
 }
 
@@ -45,13 +51,112 @@ for cmd in muse python3; do
   command -v "$cmd" >/dev/null 2>&1 || fail "$cmd was not found in PATH."
 done
 
-response_file=$(mktemp)
-trap 'rm -f "$response_file"' EXIT
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+response_file="$work/usage.json"
 
-muse_status=0
-muse usage --json > "$response_file" || muse_status=$?
-if [[ "$muse_status" -ne 0 ]]; then
-  fail "Could not get Muse usage (muse exit code $muse_status)."
+fetch_usage() {
+  local muse_status=0
+  muse usage --json > "$response_file" || muse_status=$?
+  if [[ "$muse_status" -ne 0 ]]; then
+    fail "Could not get Muse usage (muse exit code $muse_status)."
+  fi
+}
+
+fetch_usage
+
+# Open a usage window only for this server response, then query once more.
+# 이 서버 응답일 때만 사용 구간을 열고 한 번 더 조회한다.
+if python3 - "$response_file" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except (OSError, ValueError):
+    sys.exit(1)
+
+missing_usage = (
+    isinstance(data, dict)
+    and not isinstance(data.get("allowance"), dict)
+    and data.get("reason") == "server_sent_no_usage"
+)
+sys.exit(0 if missing_usage else 1)
+PY
+then
+  # Keep the recovery reply and CLI diagnostics out of the summary and JSON output.
+  # 복구 응답과 CLI 진단 메시지가 요약 및 JSON 출력에 섞이지 않게 한다.
+  if ! python3 - >"$work/exec.log" 2>&1 <<'PY'
+import math
+import os
+import signal
+import subprocess
+import sys
+
+
+def interrupted(signum, frame):
+    raise SystemExit(128 + signum)
+
+
+def run_prompt():
+    try:
+        timeout = float(os.environ.get("MUSE_EXEC_TIMEOUT_SECONDS", "60"))
+    except ValueError:
+        timeout = 0
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise RuntimeError("MUSE_EXEC_TIMEOUT_SECONDS must be a positive, finite number.")
+
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, interrupted)
+
+    process = None
+    try:
+        # Greetings can finish without a model call. Make a real subscription request,
+        # disabling contributor mode only for recovery, with tools and session logs off.
+        # 인사는 모델 호출 없이 끝날 수 있다. 복구 요청에만 기여 모드를 끄고 실제
+        # 구독 요청을 보내며, 도구 실행과 세션 기록을 끈다.
+        process = subprocess.Popen(
+            [
+                "muse", "exec", "--contributor-mode", "off",
+                "--preset", "empty", "--max-model-steps", "1",
+                "--disable-shell", "--disable-write", "--disable-web-tools",
+                "--disable-reminders", "--disable-request-user-input",
+                "--no-foreign-personal-context", "--no-session-log",
+                "Compute 17 times 19. Reply with only the integer.",
+            ],
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            status = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Timed out waiting for Muse recovery request after {timeout:g} seconds.") from None
+        if status != 0:
+            raise RuntimeError(f"Could not start Muse usage with a recovery request (muse exit code {status}).")
+    except BaseException:
+        # Stop the entire recovery process group, including any tool subprocesses.
+        # 도구 하위 프로세스를 포함해 복구용 프로세스 그룹 전체를 종료한다.
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        raise
+
+
+try:
+    run_prompt()
+except (OSError, RuntimeError) as error:
+    print(f"Error: {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    cat "$work/exec.log" >&2
+    exit 1
+  fi
+  fetch_usage
 fi
 
 if [[ "$json" == true ]]; then
