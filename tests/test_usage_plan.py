@@ -26,9 +26,8 @@ RESETS = {
     "muse": (4, 9, 0),
     "grokbot": (3, 2, 49),
     "claude": (2, 19, 0),
-    "grok": (1, 15, 42),
 }
-EXPECTED_ORDER = ["코덱스", "제미나", "뮤으즈", "그록봇", "클로드", "그로크"]
+EXPECTED_ORDER = ["코덱스", "제미나", "뮤으즈", "그록봇", "클로드"]
 
 
 def clock_12(moment):
@@ -44,9 +43,9 @@ def korean_date(moment):
     return f"{moment.month}월{moment.day:02d}일({WEEKDAYS[moment.weekday()]})"
 
 
-def grok_style(moment):
-    # Grok and Grok Bot print reset times like "November 18, 02:49".
-    # 그로크와 그록봇은 "November 18, 02:49"처럼 초기화 시각을 찍는다.
+def grok_bot_style(moment):
+    # Grok Bot prints reset times like "November 18, 02:49".
+    # 그록봇은 "November 18, 02:49"처럼 초기화 시각을 찍는다.
     return f"{LONG_MONTHS[moment.month - 1]} {moment.day}, {moment.hour:02d}:{moment.minute:02d}"
 
 
@@ -84,10 +83,6 @@ class UsagePlanTests(unittest.TestCase):
             f"{SHORT_MONTHS[r['codex'].month - 1]})",
         )
         self.write_source(
-            "grok-billing.sh",
-            f"Weekly limit (X Premium+), 23%, Resets: {grok_style(r['grok'])}",
-        )
-        self.write_source(
             "claude-usage.sh",
             "Current week (all models) :\n"
             f"  20% used, Resets {SHORT_MONTHS[r['claude'].month - 1]} {r['claude'].day} at 7pm (Asia/Seoul)",
@@ -102,7 +97,7 @@ class UsagePlanTests(unittest.TestCase):
             f"  Weekly         23% used · Resets {SHORT_MONTHS[r['muse'].month - 1]} {r['muse'].day} "
             f"at {clock_12(r['muse'])}",
         )
-        self.write_grok_bot(f"Weekly limit (X Premium+), 74.89%, Resets: {grok_style(r['grokbot'])}")
+        self.write_grok_bot(f"Weekly limit (X Premium+), 74.89%, Resets: {grok_bot_style(r['grokbot'])}")
 
     def write_grok_bot(self, summary):
         self.write_source("grok-bot-cursor-usage.sh", summary)
@@ -127,12 +122,12 @@ class UsagePlanTests(unittest.TestCase):
         reset = self.resets["grokbot"]
         self.assertIn(
             f"-   그록봇 (소진계획: `_______ 74%u`, `{korean_date(reset)}_오전2시`, "
-            f"`Resets: {grok_style(reset)}`)",
+            f"`Resets: {grok_bot_style(reset)}`)",
             entries,
         )
 
     def test_grok_bot_zero_percent_keeps_width(self):
-        self.write_grok_bot(f"Weekly limit (X Premium+), 0%, Resets: {grok_style(self.resets['grokbot'])}")
+        self.write_grok_bot(f"Weekly limit (X Premium+), 0%, Resets: {grok_bot_style(self.resets['grokbot'])}")
         result = self.run_plan()
         self.assertEqual(result.returncode, 0, result.stderr)
         row = next(line for line in self.entries(result.stdout) if line.startswith("-   그록봇 "))
@@ -142,7 +137,7 @@ class UsagePlanTests(unittest.TestCase):
         # The note shows reset times, so a trial expiry or a missing reset is an error.
         # 노트는 초기화 시각을 보여 주므로, 체험 만료나 빠진 초기화 시각은 오류다.
         summaries = (
-            f"Trial limit (X Premium+), 12.5%, Expires: {grok_style(self.resets['grokbot'])}",
+            f"Trial limit (X Premium+), 12.5%, Expires: {grok_bot_style(self.resets['grokbot'])}",
             "Weekly limit (X Premium+), 74.89%, Resets: unknown",
         )
         for summary in summaries:
